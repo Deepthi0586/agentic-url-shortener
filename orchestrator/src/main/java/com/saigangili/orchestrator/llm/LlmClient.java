@@ -21,6 +21,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  * never hardcoded, never committed. See README setup instructions for how
  * to set it locally.
  *
+ * Extended thinking is explicitly disabled on every request: for the
+ * structured-JSON-output stages this client is used for, thinking adds no
+ * value and, for larger tasks (e.g. code generation in ImplementationStage),
+ * was observed consuming the entire token budget before any answer text
+ * was produced — the response came back with stop_reason "max_tokens" and
+ * zero characters of actual text. Disabling it makes token usage
+ * predictable and ensures the budget is spent on the actual answeßr.
+ *
  * Any failure here (network error, non-200 response, unparseable output)
  * is surfaced as an exception, which the orchestrator's bounded-retry
  * policy (see OrchestratorEngine) already knows how to handle — this class
@@ -31,7 +39,7 @@ public class LlmClient {
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
     private static final String API_VERSION = "2023-06-01";
     private static final String MODEL = "claude-sonnet-5";
-    private static final int MAX_TOKENS = 2048;
+    private static final int MAX_TOKENS = 16000;
 
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
@@ -60,6 +68,9 @@ public class LlmClient {
         root.put("max_tokens", MAX_TOKENS);
         root.put("system", systemPrompt);
 
+        ObjectNode thinking = root.putObject("thinking");
+        thinking.put("type", "disabled");
+
         ArrayNode messages = root.putArray("messages");
         ObjectNode userMsg = messages.addObject();
         userMsg.put("role", "user");
@@ -72,7 +83,7 @@ public class LlmClient {
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", API_VERSION)
                 .header("content-type", "application/json")
-                .timeout(Duration.ofSeconds(60))
+                .timeout(Duration.ofSeconds(180))
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
 
@@ -83,7 +94,12 @@ public class LlmClient {
                     + response.statusCode() + " — " + response.body());
         }
 
-        return extractText(response.body());
+        String text = extractText(response.body());
+        if (text.isBlank()) {
+            throw new RuntimeException(
+                    "Claude returned an empty response (no text content). Full body: " + response.body());
+        }
+        return text;
     }
 
     /**
