@@ -1,23 +1,47 @@
 package com.saigangili.orchestrator.stages;
 
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.saigangili.orchestrator.core.DecisionEntry;
 import com.saigangili.orchestrator.core.Stage;
 import com.saigangili.orchestrator.core.StageContext;
 import com.saigangili.orchestrator.core.StageResult;
+import com.saigangili.orchestrator.llm.LlmClient;
 
 /**
- * STUB — Phase 2. Real behavior (interpret intent, identify ambiguity,
- * normalize into a clear engineering problem) is wired in during Phase 3
- * via a real Claude API call. This stub exists to prove the graph, gates,
- * retries, and approval checkpoint work correctly before adding that
- * complexity.
+ * Interprets intent, identifies ambiguity, and normalizes the raw
+ * requirement into a clear engineering problem — the first Core
+ * Requirement from the assessment (section 4.1). Calls Claude via
+ * LlmClient; any failure here is retried by OrchestratorEngine's
+ * bounded-retry policy, same as it would be for a stub failure.
  */
 public class RequirementsStage implements Stage {
+
+    private static final String SYSTEM_PROMPT = """
+            You are a requirements analyst for a software engineering team. Given a raw \
+            software requirement, interpret intent, identify ambiguity, and normalize it \
+            into a clear engineering problem.
+
+            Respond with ONLY a JSON object (no markdown, no prose outside the JSON) in \
+            exactly this shape:
+            {
+              "normalized_spec": "a few sentences describing the normalized functional and non-functional requirements",
+              "assumptions": ["assumption 1", "assumption 2"],
+              "open_ambiguities": ["ambiguity 1", "ambiguity 2"]
+            }
+
+            If there are no open ambiguities, use an empty array for open_ambiguities.
+            Keep it concise — a few sentences for normalized_spec, a handful of items \
+            per array at most.
+            """;
+
+    private final LlmClient llmClient = new LlmClient();
+    private final ObjectMapper mapper = new ObjectMapper();
 
     @Override
     public String name() {
@@ -36,18 +60,22 @@ public class RequirementsStage implements Stage {
 
     @Override
     public StageResult execute(StageContext context) throws Exception {
-        System.out.println("[requirements] Interpreting: \"" + context.requirementRaw() + "\"");
-        Thread.sleep(300);
+        String scenarioType = context.state().getScenarioType();
+        System.out.println("[requirements] Calling Claude to interpret (" + scenarioType + "): \""
+                + context.requirementRaw() + "\"");
 
-        Map<String, Object> output = new LinkedHashMap<>();
-        output.put("normalized_spec", "STUB: functional + non-functional requirements normalized from input");
-        output.put("assumptions", List.of("STUB assumption — no auth required for v1"));
-        output.put("open_ambiguities", List.of());
+        String userMessage = "Scenario type: " + scenarioType
+                + "\n\nRequirement:\n" + context.requirementRaw();
+
+        JsonNode json = llmClient.completeAsJson(SYSTEM_PROMPT, userMessage);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = mapper.convertValue(json, Map.class);
 
         DecisionEntry entry = new DecisionEntry(
                 Instant.now(),
-                "Normalized requirement into structured spec",
-                "Stub stage — placeholder reasoning; real LLM call added in Phase 3");
+                "Normalized requirement via Claude",
+                "Real Claude API call — see normalized_spec/open_ambiguities in this stage's output");
 
         return StageResult.of(output, entry);
     }
