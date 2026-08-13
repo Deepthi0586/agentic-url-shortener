@@ -1,15 +1,14 @@
 package com.saigangili.shortener.service;
 
-import com.saigangili.shortener.model.UrlMapping;
-import com.saigangili.shortener.repository.UrlMappingRepository;
+import com.saigangili.shortener.model.ShortUrl;
+import com.saigangili.shortener.repository.ShortUrlRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
-import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,169 +20,141 @@ import static org.mockito.Mockito.*;
 class ShortUrlServiceTest {
 
     @Mock
-    private UrlMappingRepository urlMappingRepository;
+    private ShortUrlRepository shortUrlRepository;
 
     private ShortUrlService shortUrlService;
 
     @BeforeEach
     void setUp() {
-        shortUrlService = new ShortUrlService(urlMappingRepository);
+        shortUrlService = new ShortUrlService(shortUrlRepository);
     }
 
     @Test
-    void createShortUrl_withBlankOriginalUrl_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class,
-                () -> shortUrlService.createShortUrl("   ", null, null, "client-1"));
-        verifyNoInteractions(urlMappingRepository);
-    }
+    void createShortUrl_withCustomAlias_savesAndReturnsShortUrl() {
+        when(shortUrlRepository.existsByShortCode("my-alias")).thenReturn(false);
+        when(shortUrlRepository.save(any(ShortUrl.class))).thenAnswer(inv -> inv.getArgument(0));
 
-    @Test
-    void createShortUrl_withoutCustomAlias_generatesUniqueShortCodeAndSaves() {
-        when(urlMappingRepository.existsByShortCode(anyString())).thenReturn(false);
-        when(urlMappingRepository.save(any(UrlMapping.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-
-        UrlMapping result = shortUrlService.createShortUrl("https://example.com", null, null, "client-1");
-
-        assertNotNull(result);
-        assertNotNull(result.getShortCode());
-        assertFalse(result.getShortCode().isBlank());
-        assertFalse(result.isCustomAlias());
-        assertEquals("https://example.com", result.getOriginalUrl());
-        assertEquals(UrlMapping.Status.ACTIVE, result.getStatus());
-        assertEquals("client-1", result.getCreatedBy());
-
-        verify(urlMappingRepository, atLeastOnce()).existsByShortCode(anyString());
-        verify(urlMappingRepository).save(any(UrlMapping.class));
-    }
-
-    @Test
-    void createShortUrl_withValidCustomAlias_usesAliasAsShortCode() {
-        when(urlMappingRepository.existsByShortCode("my-alias")).thenReturn(false);
-        when(urlMappingRepository.save(any(UrlMapping.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-
-        UrlMapping result = shortUrlService.createShortUrl("https://example.com", "my-alias", null, "client-1");
+        ShortUrl result = shortUrlService.createShortUrl("https://example.com", "my-alias", "user1");
 
         assertEquals("my-alias", result.getShortCode());
-        assertTrue(result.isCustomAlias());
-        verify(urlMappingRepository).existsByShortCode("my-alias");
-        verify(urlMappingRepository).save(any(UrlMapping.class));
+        assertEquals("https://example.com", result.getTargetUrl());
+        assertTrue(result.isCustom());
+        assertEquals("user1", result.getCreatedBy());
+        verify(shortUrlRepository).save(any(ShortUrl.class));
     }
 
     @Test
-    void createShortUrl_withInvalidCustomAlias_throwsIllegalArgumentException() {
-        assertThrows(IllegalArgumentException.class,
-                () -> shortUrlService.createShortUrl("https://example.com", "ab", null, "client-1"));
-        verify(urlMappingRepository, never()).existsByShortCode(anyString());
-        verify(urlMappingRepository, never()).save(any(UrlMapping.class));
+    void createShortUrl_withoutAlias_generatesAutoCodeAndSaves() {
+        when(shortUrlRepository.existsByShortCode(anyString())).thenReturn(false);
+        when(shortUrlRepository.save(any(ShortUrl.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ShortUrl result = shortUrlService.createShortUrl("https://example.com", null, "user1");
+
+        assertNotNull(result.getShortCode());
+        assertEquals(7, result.getShortCode().length());
+        assertFalse(result.isCustom());
+        verify(shortUrlRepository).save(any(ShortUrl.class));
     }
 
     @Test
-    void createShortUrl_withAliasAlreadyInUse_throwsIllegalStateException() {
-        when(urlMappingRepository.existsByShortCode("taken")).thenReturn(true);
+    void createShortUrl_withBlankAlias_usesAutoGeneration() {
+        when(shortUrlRepository.existsByShortCode(anyString())).thenReturn(false);
+        when(shortUrlRepository.save(any(ShortUrl.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> shortUrlService.createShortUrl("https://example.com", "taken", null, "client-1"));
+        ShortUrl result = shortUrlService.createShortUrl("https://example.com", "   ", "user1");
 
-        assertTrue(ex.getMessage().contains("taken"));
-        verify(urlMappingRepository, never()).save(any(UrlMapping.class));
+        assertFalse(result.isCustom());
+        verify(shortUrlRepository, never()).existsByShortCode("   ");
     }
 
     @Test
-    void getMetadata_whenFound_returnsMapping() {
-        UrlMapping mapping = new UrlMapping("abc123", "https://example.com", false,
-                LocalDateTime.now(), null, UrlMapping.Status.ACTIVE, "client-1");
-        when(urlMappingRepository.findByShortCode("abc123")).thenReturn(Optional.of(mapping));
-
-        Optional<UrlMapping> result = shortUrlService.getMetadata("abc123");
-
-        assertTrue(result.isPresent());
-        assertEquals("abc123", result.get().getShortCode());
+    void createShortUrl_withAliasTooShort_throwsInvalidAliasException() {
+        ShortUrlService.InvalidAliasException ex = assertThrows(
+                ShortUrlService.InvalidAliasException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", "ab", "user1"));
+        assertTrue(ex.getMessage().contains("between"));
+        verify(shortUrlRepository, never()).save(any());
     }
 
     @Test
-    void getMetadata_whenNotFound_returnsEmpty() {
-        when(urlMappingRepository.findByShortCode("missing")).thenReturn(Optional.empty());
-
-        Optional<UrlMapping> result = shortUrlService.getMetadata("missing");
-
-        assertTrue(result.isEmpty());
+    void createShortUrl_withAliasTooLong_throwsInvalidAliasException() {
+        String longAlias = "a".repeat(33);
+        assertThrows(ShortUrlService.InvalidAliasException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", longAlias, "user1"));
     }
 
     @Test
-    void resolveForRedirect_whenNotFound_returnsEmpty() {
-        when(urlMappingRepository.findByShortCode("missing")).thenReturn(Optional.empty());
-
-        Optional<UrlMapping> result = shortUrlService.resolveForRedirect("missing");
-
-        assertTrue(result.isEmpty());
-        verify(urlMappingRepository, never()).save(any(UrlMapping.class));
+    void createShortUrl_withInvalidCharacters_throwsInvalidAliasException() {
+        assertThrows(ShortUrlService.InvalidAliasException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", "bad alias!", "user1"));
     }
 
     @Test
-    void resolveForRedirect_whenDeleted_returnsEmpty() {
-        UrlMapping mapping = new UrlMapping("abc123", "https://example.com", false,
-                LocalDateTime.now(), null, UrlMapping.Status.DELETED, "client-1");
-        when(urlMappingRepository.findByShortCode("abc123")).thenReturn(Optional.of(mapping));
-
-        Optional<UrlMapping> result = shortUrlService.resolveForRedirect("abc123");
-
-        assertTrue(result.isEmpty());
-        verify(urlMappingRepository, never()).save(any(UrlMapping.class));
+    void createShortUrl_withReservedWord_throwsInvalidAliasException() {
+        ShortUrlService.InvalidAliasException ex = assertThrows(
+                ShortUrlService.InvalidAliasException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", "admin", "user1"));
+        assertTrue(ex.getMessage().contains("reserved"));
     }
 
     @Test
-    void resolveForRedirect_whenExpired_marksExpiredAndReturnsEmpty() {
-        UrlMapping mapping = new UrlMapping("abc123", "https://example.com", false,
-                LocalDateTime.now().minusDays(2), LocalDateTime.now().minusHours(1),
-                UrlMapping.Status.ACTIVE, "client-1");
-        when(urlMappingRepository.findByShortCode("abc123")).thenReturn(Optional.of(mapping));
+    void createShortUrl_withExistingAlias_throwsAliasAlreadyExistsException() {
+        when(shortUrlRepository.existsByShortCode("taken")).thenReturn(true);
 
-        Optional<UrlMapping> result = shortUrlService.resolveForRedirect("abc123");
-
-        assertTrue(result.isEmpty());
-
-        ArgumentCaptor<UrlMapping> captor = ArgumentCaptor.forClass(UrlMapping.class);
-        verify(urlMappingRepository).save(captor.capture());
-        assertEquals(UrlMapping.Status.EXPIRED, captor.getValue().getStatus());
+        assertThrows(ShortUrlService.AliasAlreadyExistsException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", "taken", "user1"));
+        verify(shortUrlRepository, never()).save(any());
     }
 
     @Test
-    void resolveForRedirect_whenActiveAndNotExpired_returnsMapping() {
-        UrlMapping mapping = new UrlMapping("abc123", "https://example.com", false,
-                LocalDateTime.now(), LocalDateTime.now().plusDays(1),
-                UrlMapping.Status.ACTIVE, "client-1");
-        when(urlMappingRepository.findByShortCode("abc123")).thenReturn(Optional.of(mapping));
+    void createShortUrl_withRaceConditionOnSave_throwsAliasAlreadyExistsException() {
+        when(shortUrlRepository.existsByShortCode("racey")).thenReturn(false);
+        when(shortUrlRepository.save(any(ShortUrl.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate"));
 
-        Optional<UrlMapping> result = shortUrlService.resolveForRedirect("abc123");
-
-        assertTrue(result.isPresent());
-        assertEquals("https://example.com", result.get().getOriginalUrl());
-        verify(urlMappingRepository, never()).save(any(UrlMapping.class));
+        assertThrows(ShortUrlService.AliasAlreadyExistsException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", "racey", "user1"));
     }
 
     @Test
-    void deactivate_whenFound_setsDeletedStatusAndReturnsTrue() {
-        UrlMapping mapping = new UrlMapping("abc123", "https://example.com", false,
-                LocalDateTime.now(), null, UrlMapping.Status.ACTIVE, "client-1");
-        when(urlMappingRepository.findByShortCode("abc123")).thenReturn(Optional.of(mapping));
+    void createShortUrl_autoGenerated_retriesOnCollisionThenSucceeds() {
+        when(shortUrlRepository.existsByShortCode(anyString()))
+                .thenReturn(true, true, false);
+        when(shortUrlRepository.save(any(ShortUrl.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        boolean result = shortUrlService.deactivate("abc123");
+        ShortUrl result = shortUrlService.createShortUrl("https://example.com", null, "user1");
 
-        assertTrue(result);
-        ArgumentCaptor<UrlMapping> captor = ArgumentCaptor.forClass(UrlMapping.class);
-        verify(urlMappingRepository).save(captor.capture());
-        assertEquals(UrlMapping.Status.DELETED, captor.getValue().getStatus());
+        assertNotNull(result);
+        verify(shortUrlRepository, times(3)).existsByShortCode(anyString());
+        verify(shortUrlRepository, times(1)).save(any(ShortUrl.class));
     }
 
     @Test
-    void deactivate_whenNotFound_returnsFalse() {
-        when(urlMappingRepository.findByShortCode("missing")).thenReturn(Optional.empty());
+    void createShortUrl_autoGenerated_exhaustsAttemptsAndThrows() {
+        when(shortUrlRepository.existsByShortCode(anyString())).thenReturn(true);
 
-        boolean result = shortUrlService.deactivate("missing");
+        assertThrows(IllegalStateException.class,
+                () -> shortUrlService.createShortUrl("https://example.com", null, "user1"));
+        verify(shortUrlRepository, never()).save(any());
+    }
 
-        assertFalse(result);
-        verify(urlMappingRepository, never()).save(any(UrlMapping.class));
+    @Test
+    void getByShortCode_whenFound_returnsShortUrl() {
+        ShortUrl existing = new ShortUrl("abc1234", "https://example.com", false, "user1");
+        when(shortUrlRepository.findByShortCode("abc1234")).thenReturn(Optional.of(existing));
+
+        ShortUrl result = shortUrlService.getByShortCode("abc1234");
+
+        assertEquals(existing, result);
+    }
+
+    @Test
+    void getByShortCode_whenNotFound_throwsShortUrlNotFoundException() {
+        when(shortUrlRepository.findByShortCode("missing")).thenReturn(Optional.empty());
+
+        ShortUrlService.ShortUrlNotFoundException ex = assertThrows(
+                ShortUrlService.ShortUrlNotFoundException.class,
+                () -> shortUrlService.getByShortCode("missing"));
+        assertTrue(ex.getMessage().contains("missing"));
     }
 }

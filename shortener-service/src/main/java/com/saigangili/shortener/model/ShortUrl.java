@@ -1,57 +1,42 @@
 package com.saigangili.shortener.model;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import java.time.LocalDateTime;
+import jakarta.persistence.*;
+import java.time.Instant;
 
 @Entity
-@Table(name = "short_url")
+@Table(name = "short_urls", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_short_code", columnNames = "short_code")
+})
 public class ShortUrl {
-
-    public enum Status {
-        ACTIVE, DELETED
-    }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "short_code", unique = true, nullable = false, length = 16)
+    @Column(name = "short_code", nullable = false, unique = true, length = 64)
     private String shortCode;
 
-    @Column(name = "original_url", nullable = false, length = 2048)
-    private String originalUrl;
+    @Column(name = "target_url", nullable = false, length = 2048)
+    private String targetUrl;
 
-    @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt;
+    @Column(name = "is_custom", nullable = false)
+    private boolean isCustom;
 
-    @Column(name = "created_by", nullable = false)
+    @Column(name = "created_by")
     private String createdBy;
 
-    @Column(nullable = false)
-    private Status status = Status.ACTIVE;
-
-    @Column(name = "expires_at")
-    private LocalDateTime expiresAt;
-
-    // Simple in-memory click counter reference is NOT stored here;
-    // click count summary for GET /urls/{code} would normally be derived
-    // from ClickEvent aggregation (out of scope for this pass).
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
 
     public ShortUrl() {
     }
 
-    public ShortUrl(String shortCode, String originalUrl, String createdBy, LocalDateTime expiresAt) {
+    public ShortUrl(String shortCode, String targetUrl, boolean isCustom, String createdBy) {
         this.shortCode = shortCode;
-        this.originalUrl = originalUrl;
+        this.targetUrl = targetUrl;
+        this.isCustom = isCustom;
         this.createdBy = createdBy;
-        this.expiresAt = expiresAt;
-        this.createdAt = LocalDateTime.now();
-        this.status = Status.ACTIVE;
+        this.createdAt = Instant.now();
     }
 
     public Long getId() {
@@ -70,20 +55,20 @@ public class ShortUrl {
         this.shortCode = shortCode;
     }
 
-    public String getOriginalUrl() {
-        return originalUrl;
+    public String getTargetUrl() {
+        return targetUrl;
     }
 
-    public void setOriginalUrl(String originalUrl) {
-        this.originalUrl = originalUrl;
+    public void setTargetUrl(String targetUrl) {
+        this.targetUrl = targetUrl;
     }
 
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
+    public boolean isCustom() {
+        return isCustom;
     }
 
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
+    public void setCustom(boolean custom) {
+        isCustom = custom;
     }
 
     public String getCreatedBy() {
@@ -94,19 +79,11 @@ public class ShortUrl {
         this.createdBy = createdBy;
     }
 
-    public Status getStatus() {
-        return status;
+    public Instant getCreatedAt() {
+        return createdAt;
     }
 
-    public void setStatus(Status status) {
-        this.status = status;
-    }
-
-    public LocalDateTime getExpiresAt() {
-        return expiresAt;
-    }
-
-    public void setExpiresAt(LocalDateTime expiresAt) {
-        this.expiresAt = expiresAt;
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
     }
 }

@@ -2,23 +2,20 @@ package com.saigangili.shortener.controller;
 
 import com.saigangili.shortener.model.ShortUrl;
 import com.saigangili.shortener.service.ShortUrlService;
-import org.springframework.http.HttpHeaders;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
-import java.time.LocalDateTime;
 
-// NOTE: API key authentication and per-key rate limiting are expected to be
-// enforced by a filter/interceptor (e.g., extracting X-API-Key header,
-// validating against ApiKey table, and applying rate_limit_tier) - out of
-// scope for this pass. Endpoints below assume the owner id is resolved from
-// the API key and passed in as a header for demonstration purposes.
-// NOTE: Stats aggregation endpoint (GET /urls/{code}/stats) is out of scope
-// for this pass since it depends on ClickEvent aggregation/reporting.
 @RestController
+@RequestMapping("/api/urls")
 public class ShortUrlController {
+
+    // Note: existing auth middleware/token check is assumed to be applied
+    // via security filter chain configured elsewhere in the project.
 
     private final ShortUrlService shortUrlService;
 
@@ -26,61 +23,51 @@ public class ShortUrlController {
         this.shortUrlService = shortUrlService;
     }
 
-    @PostMapping("/urls")
-    public ResponseEntity<CreateShortUrlResponse> createShortUrl(
-            @RequestHeader("X-API-Key") String apiKey,
-            @RequestBody CreateShortUrlRequest request) {
-        ShortUrl shortUrl = shortUrlService.createShortUrl(request.originalUrl(), apiKey, request.expiresAt());
-        String fullShortUrl = "https://short.ly/" + shortUrl.getShortCode();
-        CreateShortUrlResponse response = new CreateShortUrlResponse(shortUrl.getShortCode(), fullShortUrl);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
-    }
+    @PostMapping
+    public ResponseEntity<?> createShortUrl(@RequestBody CreateShortUrlRequest request,
+                                             Authentication authentication) {
+        if (request.targetUrl() == null || request.targetUrl().isBlank()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("INVALID_TARGET_URL", "targetUrl is required"));
+        }
 
-    @GetMapping("/urls/{code}")
-    public ResponseEntity<UrlMetadataResponse> getMetadata(@RequestHeader("X-API-Key") String apiKey,
-                                                            @PathVariable String code) {
-        ShortUrl shortUrl = shortUrlService.getActiveByCode(code);
-        // Click count summary would normally come from aggregated ClickEvent data;
-        // returning 0 as a placeholder since analytics storage is out of scope.
-        UrlMetadataResponse response = new UrlMetadataResponse(
-                shortUrl.getShortCode(),
-                shortUrl.getOriginalUrl(),
-                shortUrl.getCreatedAt(),
-                0L);
-        return ResponseEntity.ok(response);
+        String createdBy = authentication != null ? authentication.getName() : null;
+
+        try {
+            ShortUrl created = shortUrlService.createShortUrl(
+                    request.targetUrl(), request.customAlias(), createdBy);
+
+            ShortUrlResponse body = new ShortUrlResponse(
+                    created.getShortCode(),
+                    created.getTargetUrl(),
+                    created.isCustom());
+
+            return ResponseEntity.created(URI.create("/" + created.getShortCode())).body(body);
+
+        } catch (ShortUrlService.InvalidAliasException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("INVALID_ALIAS", e.getMessage()));
+        } catch (ShortUrlService.AliasAlreadyExistsException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(new ErrorResponse("ALIAS_ALREADY_EXISTS", e.getMessage()));
+        }
     }
 
     @GetMapping("/{code}")
-    public ResponseEntity<Void> redirect(@PathVariable String code) {
-        String originalUrl = shortUrlService.resolveOriginalUrl(code);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setLocation(URI.create(originalUrl));
-        return new ResponseEntity<>(headers, HttpStatus.FOUND);
+    public ResponseEntity<Void> redirect(@PathVariable String code, HttpServletRequest request) {
+        // Note: redirect-path caching remains unchanged / out of scope for this pass.
+        ShortUrl shortUrl = shortUrlService.getByShortCode(code);
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(shortUrl.getTargetUrl()))
+                .build();
     }
 
-    @DeleteMapping("/urls/{code}")
-    public ResponseEntity<Void> deleteShortUrl(@RequestHeader("X-API-Key") String apiKey,
-                                                @PathVariable String code) {
-        shortUrlService.deactivate(code, apiKey);
-        return ResponseEntity.noContent().build();
+    public record CreateShortUrlRequest(String targetUrl, String customAlias) {
     }
 
-    @ExceptionHandler(ShortUrlService.ShortUrlNotFoundException.class)
-    public ResponseEntity<String> handleNotFound(ShortUrlService.ShortUrlNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
+    public record ShortUrlResponse(String shortCode, String targetUrl, boolean isCustom) {
     }
 
-    @ExceptionHandler(ShortUrlService.NotOwnerException.class)
-    public ResponseEntity<String> handleForbidden(ShortUrlService.NotOwnerException ex) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ex.getMessage());
-    }
-
-    public record CreateShortUrlRequest(String originalUrl, LocalDateTime expiresAt) {
-    }
-
-    public record CreateShortUrlResponse(String shortCode, String shortUrl) {
-    }
-
-    public record UrlMetadataResponse(String shortCode, String originalUrl, LocalDateTime createdAt, Long clickCount) {
+    public record ErrorResponse(String errorCode, String message) {
     }
 }
