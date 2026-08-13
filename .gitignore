@@ -21,4 +21,5 @@ llm-api-key.txt
 
 # Logs
 *.log
+!scenarios/*.log
 orchestrator-runs/
