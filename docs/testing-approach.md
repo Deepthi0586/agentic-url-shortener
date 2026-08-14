@@ -105,3 +105,8 @@ and `docs/validation-and-risk.md`)
   understood and defensible rather than delegated to library internals.
 - A CLI approval prompt instead of a web UI — fast to build for a
   solo prototype, not suitable for a real multi-reviewer team workflow.
+
+Note: the brownfield path is requirement-agnostic — it handles bug
+fixes, refactors, and test/documentation improvements through the
+same Codebase Reasoning → Design → Implementation flow demonstrated
+in the required brownfield scenario, not just feature additions.
