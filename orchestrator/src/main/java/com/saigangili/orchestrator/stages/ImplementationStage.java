@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.saigangili.orchestrator.core.DecisionEntry;
 import com.saigangili.orchestrator.core.Stage;
@@ -73,7 +72,6 @@ public class ImplementationStage implements Stage {
             """;
 
     private final LlmClient llmClient = new LlmClient();
-    private final ObjectMapper mapper = new ObjectMapper();
 
     private static final Path TARGET_BASE_DIR =
             Paths.get("shortener-service", "src", "main", "java", "com", "saigangili", "shortener");
