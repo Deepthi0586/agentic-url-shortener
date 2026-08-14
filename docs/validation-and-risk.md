@@ -1,3 +1,8 @@
+In short: I hit a couple of real bugs while building this — API billing
+running out mid-run, and the AI silently generating nothing useful for
+a while — and instead of just patching around them, I dug into why
+they happened and fixed the actual cause. Details below.
+
 # Validation and Risk Control
 
 This document identifies risks and failure scenarios in the system and
@@ -16,10 +21,10 @@ network timeouts, or a transient outage.
 **Guardrail:** `LlmClient` (see `orchestrator/.../llm/LlmClient.java`)
 raises an exception on any non-200 response rather than silently
 returning empty or partial data. `OrchestratorEngine`'s bounded-retry
-policy (max 2 retries per stage) then applies automatically — no
-LLM-specific retry logic was needed, because the retry mechanism was
-designed to be failure-source-agnostic from the start (see
-`docs/orchestration-design.md`, section 5).
+policy (max 2 retries per stage) picks this up automatically — I didn't
+need to write any special retry logic just for LLM calls, since the
+retry mechanism already treats any stage failure the same way, no
+matter what caused it (see `docs/orchestration-design.md`, section 5).
 
 **Evidence (real, not simulated):** a run was executed against a live
 Anthropic API account with an empty credit balance. The Requirements
@@ -106,7 +111,51 @@ to a single developer's machine — noted here as a known limitation
 rather than solved, consistent with the assessment's expectation that
 limitations be stated explicitly rather than hidden.
 
-## 7. Trade-off: JSON file state vs. a real database
+## 7. LLM silently produces no usable output (extended thinking + truncation)
+
+**Risk:** An LLM call can return HTTP 200 (success) while still producing
+no usable answer — either because internal reasoning consumes the
+entire token budget before any answer is written, or because a large
+response is cut off mid-generation, breaking the expected JSON
+structure. Both are silent failure modes: no error is raised by the
+API itself, so a naive integration could treat them as success.
+
+**Evidence (real, not simulated):** during development, the
+Implementation stage (which asks Claude to generate multiple Spring
+Boot source files) initially returned completely empty text on every
+attempt. Inspecting the raw HTTP response body directly showed why:
+```json
+"content":[{"type":"thinking","thinking":"","signature":"..."}],
+"stop_reason":"max_tokens",
+"output_tokens_details":{"thinking_tokens":4096}
+```
+Extended thinking had used the entire 4096-token budget internally,
+leaving nothing for the actual answer. After disabling extended
+thinking explicitly (`"thinking": {"type": "disabled"}`) and raising
+the token budget, a second, related failure appeared: generating many
+files in one response still occasionally exceeded the token limit
+mid-JSON, breaking the parse.
+
+**Guardrail:**
+- `LlmClient` now explicitly disables extended thinking on every
+  request and raises an exception (rather than returning silently) if
+  extracted text is ever blank — surfacing this failure mode loudly if
+  it recurs, instead of succeeding with nothing.
+- `ImplementationStage`'s prompt was scoped down (a hard cap on file
+  count, explicit exclusion of out-of-scope features) so the response
+  reliably fits the token budget, rather than relying on an
+  unboundedly large single response.
+- Both fixes are covered by the same bounded-retry / safe-stop
+  mechanism as any other stage failure — no special-case handling was
+  needed once the underlying `complete()` method correctly raises an
+  exception instead of returning empty text.
+
+This is also why the Testing stage's compile-failure path (section 1
+above's sibling case) matters: if generated code doesn't compile, that
+is treated as a genuine stage failure, not silently reported as
+"0 tests passed."
+
+## 8. Trade-off: JSON file state vs. a real database
 
 Addressed in full in `docs/orchestration-design.md`, section 8. Restated
 briefly here as a risk-framing: the trade-off accepted is that
