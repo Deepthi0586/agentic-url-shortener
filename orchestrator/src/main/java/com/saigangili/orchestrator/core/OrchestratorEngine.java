@@ -217,6 +217,17 @@ public class OrchestratorEngine {
         if (state.getStartedAt() != null) {
             metrics.setTotalLatencySeconds(Duration.between(state.getStartedAt(), Instant.now()).toSeconds());
         }
+
+        List<Double> recoveryTimes = graph.allStages().stream()
+                .map(s -> state.stageState(s.name()))
+                .filter(ss -> ss.getRetries() > 0 && ss.getStartedAt() != null && ss.getCompletedAt() != null)
+                .map(ss -> (double) Duration.between(ss.getStartedAt(), ss.getCompletedAt()).toSeconds())
+                .toList();
+        double mttr = recoveryTimes.isEmpty()
+                ? 0.0
+                : recoveryTimes.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        metrics.setMttrSeconds(mttr);
+
         state.setCompletedAt(Instant.now());
     }
 

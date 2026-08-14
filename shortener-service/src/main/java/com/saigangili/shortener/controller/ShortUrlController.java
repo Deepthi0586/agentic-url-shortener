@@ -1,21 +1,26 @@
 package com.saigangili.shortener.controller;
 
-import com.saigangili.shortener.model.ShortUrl;
+import com.saigangili.shortener.model.UrlMapping;
 import com.saigangili.shortener.service.ShortUrlService;
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.URI;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.*;
-
-import java.net.URI;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/urls")
 public class ShortUrlController {
 
-    // Note: existing auth middleware/token check is assumed to be applied
-    // via security filter chain configured elsewhere in the project.
+    // NOTE: Authentication (API key / token) for management endpoints is assumed to be
+    // enforced by a security filter/interceptor upstream (e.g. Spring Security), not
+    // implemented in this controller. The redirect endpoint below remains public.
+    // Analytics endpoint (GET /urls/{code}/analytics) is out of scope for this pass.
 
     private final ShortUrlService shortUrlService;
 
@@ -23,51 +28,60 @@ public class ShortUrlController {
         this.shortUrlService = shortUrlService;
     }
 
-    @PostMapping
-    public ResponseEntity<?> createShortUrl(@RequestBody CreateShortUrlRequest request,
-                                             Authentication authentication) {
-        if (request.targetUrl() == null || request.targetUrl().isBlank()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse("INVALID_TARGET_URL", "targetUrl is required"));
-        }
+    @PostMapping("/urls")
+    public ResponseEntity<CreateUrlResponse> createShortUrl(@RequestBody CreateUrlRequest request,
+                                                              HttpServletRequest httpRequest) {
+        String ownerId = resolveOwnerId(httpRequest);
+        UrlMapping mapping = shortUrlService.createShortUrl(request.longUrl(), request.customAlias(), ownerId);
+        CreateUrlResponse response = new CreateUrlResponse(mapping.getShortCode(), mapping.getLongUrl());
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
 
-        String createdBy = authentication != null ? authentication.getName() : null;
-
-        try {
-            ShortUrl created = shortUrlService.createShortUrl(
-                    request.targetUrl(), request.customAlias(), createdBy);
-
-            ShortUrlResponse body = new ShortUrlResponse(
-                    created.getShortCode(),
-                    created.getTargetUrl(),
-                    created.isCustom());
-
-            return ResponseEntity.created(URI.create("/" + created.getShortCode())).body(body);
-
-        } catch (ShortUrlService.InvalidAliasException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse("INVALID_ALIAS", e.getMessage()));
-        } catch (ShortUrlService.AliasAlreadyExistsException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(new ErrorResponse("ALIAS_ALREADY_EXISTS", e.getMessage()));
-        }
+    @GetMapping("/urls/{code}")
+    public ResponseEntity<UrlMetadataResponse> getMetadata(@PathVariable("code") String code) {
+        UrlMapping mapping = shortUrlService.getMetadata(code);
+        UrlMetadataResponse response = new UrlMetadataResponse(
+                mapping.getShortCode(),
+                mapping.getLongUrl(),
+                mapping.getOwnerId(),
+                mapping.getCreatedAt().toString(),
+                mapping.isCustomAlias(),
+                mapping.getStatus().name());
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{code}")
-    public ResponseEntity<Void> redirect(@PathVariable String code, HttpServletRequest request) {
-        // Note: redirect-path caching remains unchanged / out of scope for this pass.
-        ShortUrl shortUrl = shortUrlService.getByShortCode(code);
+    public ResponseEntity<Void> redirect(@PathVariable("code") String code) {
+        // NOTE: this lookup would be served from the Redis cache in a full implementation
+        // to achieve sub-100ms redirect latency.
+        String longUrl = shortUrlService.resolveLongUrl(code);
         return ResponseEntity.status(HttpStatus.FOUND)
-                .location(URI.create(shortUrl.getTargetUrl()))
+                .location(URI.create(longUrl))
                 .build();
     }
 
-    public record CreateShortUrlRequest(String targetUrl, String customAlias) {
+    @DeleteMapping("/urls/{code}")
+    public ResponseEntity<Void> deleteShortUrl(@PathVariable("code") String code,
+                                                HttpServletRequest httpRequest) {
+        String ownerId = resolveOwnerId(httpRequest);
+        shortUrlService.deleteShortUrl(code, ownerId);
+        return ResponseEntity.noContent().build();
     }
 
-    public record ShortUrlResponse(String shortCode, String targetUrl, boolean isCustom) {
+    private String resolveOwnerId(HttpServletRequest request) {
+        // Placeholder extraction of the authenticated API consumer identity, expected
+        // to be populated by an upstream auth filter (e.g. as a request attribute or header).
+        String ownerId = request.getHeader("X-Api-Owner-Id");
+        return ownerId != null ? ownerId : "unknown";
     }
 
-    public record ErrorResponse(String errorCode, String message) {
+    public record CreateUrlRequest(String longUrl, String customAlias) {
+    }
+
+    public record CreateUrlResponse(String shortCode, String longUrl) {
+    }
+
+    public record UrlMetadataResponse(String shortCode, String longUrl, String ownerId,
+                                       String createdAt, boolean customAlias, String status) {
     }
 }

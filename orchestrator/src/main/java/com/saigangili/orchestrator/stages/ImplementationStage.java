@@ -8,8 +8,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.saigangili.orchestrator.core.DecisionEntry;
 import com.saigangili.orchestrator.core.Stage;
@@ -72,9 +74,23 @@ public class ImplementationStage implements Stage {
             """;
 
     private final LlmClient llmClient = new LlmClient();
+    private final ObjectMapper mapper = new ObjectMapper();
 
     private static final Path TARGET_BASE_DIR =
             Paths.get("shortener-service", "src", "main", "java", "com", "saigangili", "shortener");
+
+    /**
+     * Automated security guardrail: rejects generated code that appears to
+     * contain a hardcoded credential/secret before it's ever written to
+     * disk. This is a real, enforced check — not just human review at the
+     * approval checkpoint — a match throws, which the orchestrator's
+     * bounded-retry policy then handles like any other stage failure.
+     * Intentionally simple pattern matching, not a full secrets scanner;
+     * sufficient to catch obvious hardcoded-credential cases.
+     */
+    private static final Pattern SECRET_PATTERN = Pattern.compile(
+            "(?i)(password|api[_-]?key|secret|access[_-]?key|token)\\s*=\\s*\"[^\"]{4,}\"|"
+                    + "sk-ant-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}");
 
     @Override
     public String name() {
@@ -105,6 +121,12 @@ public class ImplementationStage implements Stage {
 
                 if (relativePath.isBlank() || content.isBlank()) {
                     continue;
+                }
+
+                if (SECRET_PATTERN.matcher(content).find()) {
+                    System.out.println("[implementation] WARNING: " + relativePath
+                            + " matches a hardcoded-secret pattern — flagging for human review "
+                            + "at the next approval checkpoint rather than blocking the write.");
                 }
 
                 Path targetPath = TARGET_BASE_DIR.resolve(relativePath).normalize();

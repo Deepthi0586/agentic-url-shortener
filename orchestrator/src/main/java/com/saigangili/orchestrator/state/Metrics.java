@@ -11,6 +11,7 @@ public class Metrics {
     private int retryCount = 0;
     private int rollbackCount = 0;
     private long totalLatencySeconds = 0;
+    private double mttrSeconds = 0.0;
 
     public double getSuccessRate() {
         return successRate;
@@ -52,11 +53,20 @@ public class Metrics {
         this.totalLatencySeconds = totalLatencySeconds;
     }
 
+    public double getMttrSeconds() {
+        return mttrSeconds;
+    }
+
+    public void setMttrSeconds(double mttrSeconds) {
+        this.mttrSeconds = mttrSeconds;
+    }
+
     @Override
     public String toString() {
         return "successRate=" + successRate
                 + ", retryCount=" + retryCount
                 + ", rollbackCount=" + rollbackCount
-                + ", totalLatencySeconds=" + totalLatencySeconds;
+                + ", totalLatencySeconds=" + totalLatencySeconds
+                + ", mttrSeconds=" + mttrSeconds;
     }
 }

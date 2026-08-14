@@ -95,6 +95,7 @@ public class TestingStage implements Stage {
         List<String> testFilesWritten = writeFiles(filesNode);
 
         System.out.println("[testing] Running ./gradlew :shortener-service:test");
+        clearStaleTestResults();
         int exitCode = runGradleTest();
 
         Map<String, Object> testCounts = parseTestResults();
@@ -163,6 +164,16 @@ public class TestingStage implements Stage {
             System.out.println("[testing] Wrote " + targetPath);
         }
         return written;
+    }
+
+    private void clearStaleTestResults() throws IOException {
+        if (Files.isDirectory(TEST_RESULTS_DIR)) {
+            try (var files = Files.list(TEST_RESULTS_DIR)) {
+                for (Path file : files.filter(p -> p.toString().endsWith(".xml")).toList()) {
+                    Files.deleteIfExists(file);
+                }
+            }
+        }
     }
 
     private int runGradleTest() throws IOException, InterruptedException {
