@@ -60,9 +60,12 @@ for how this would be structured in production.
    ./gradlew :shortener-service:bootRun
 ```
 
-See `scenarios/` for saved logs of all three scenarios already run, and
-`docs/final-engineering-summary.md` for the full write-up of what was
-built, real outcomes, assumptions, and limitations.
+See `scenarios/` for saved logs of all three scenarios already run,
+`docs/testing-approach.md` for how the system was tested (orchestrator
+logic, LLM integration, generated code) plus limitations and
+trade-offs, and `docs/final-engineering-summary.md` for the full
+write-up of what was built, real outcomes, assumptions, and
+limitations.
 
 ## Status
 
